@@ -8,15 +8,8 @@
 # Mandatory items:
 [general]
 name=TOFPA
-
-qgisMinimumVersion=3.22
-qgisMaximumVersion=4.99
-description=QGIS plugin for ICAO Doc 8168 Takeoff and Final Approach (TOFPA) surface analysis
-version=2.0.0
-author=FLYGHT7
-email=contact@flyght7.dev
-
 qgisMinimumVersion=3.30
+qgisMaximumVersion=4.99
 description=ICAO Annex 4 Take Off Flight Path Area (TOFPA) creation and analysis
 version=0.0.1
 author=FLYGHT7
