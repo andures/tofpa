@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import logging
 from math import atan, atan2, pi
-from typing import Any, Optional
+from typing import Optional
 
 from qgis.core import (
     QgsFillSymbol,
@@ -26,7 +26,6 @@ from qgis.core import (
     QgsPointXY,
     QgsProject,
     QgsVectorLayer,
-    QgsWkbTypes,
 )
 from ..utils.compat import FIELD_INT, FIELD_DOUBLE, FIELD_STRING, WKB_POLYGON_GEOM  # MIGA-01, MIGA-02
 from ._contour_utils import distance_along_axis as _distance_along_axis

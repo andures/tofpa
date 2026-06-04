@@ -89,21 +89,21 @@ class TofpaDockWidget(QDockWidget, FORM_CLASS):
         # Runway Layer: Only LineString geometries (lines)
         self.runwayLayerCombo.setFilters(LAYER_FILTER_VECTOR)
         self.runwayLayerCombo.setExceptedLayerList([])
-        
-        # Threshold Layer: Only Point geometries  
+
+        # Threshold Layer: Only Point geometries
         self.thresholdLayerCombo.setFilters(LAYER_FILTER_VECTOR)
         self.thresholdLayerCombo.setExceptedLayerList([])
-        
+
         # Obstacles Layer: Point or Polygon geometries
         self.obstaclesLayerCombo.setFilters(LAYER_FILTER_VECTOR)
         self.obstaclesLayerCombo.setExceptedLayerList([])
-        
+
         # Apply geometry-specific filters
         try:
             self._apply_geometry_filters()
         except Exception:
             logger.debug("Geometry filter application skipped (QGIS not ready)", exc_info=True)
-        
+
         # Connect to layer changes to refresh filters and obstacle field combo
         try:
             from qgis.core import QgsProject
@@ -111,13 +111,13 @@ class TofpaDockWidget(QDockWidget, FORM_CLASS):
             QgsProject.instance().layersRemoved.connect(self._on_layers_changed)
         except Exception:
             logger.debug("QGIS layers signal connection failed - running outside QGIS", exc_info=True)
-        
+
         # Connect obstacles layer change to update height field combo
         self.obstaclesLayerCombo.layerChanged.connect(self._update_obstacle_fields)
-        
+
         # Connect checkbox to enable/disable obstacles group
         self.includeObstaclesCheckBox.toggled.connect(self._toggle_obstacles_group)
-        
+
         # Set default values from original script
         self.initialWidthSpin.setValue(180.0)
         self.maxWidthSpin.setValue(1800.0)
@@ -128,23 +128,23 @@ class TofpaDockWidget(QDockWidget, FORM_CLASS):
         self.exportToAixmCheckBox.setChecked(False)
         self.useSelectedFeatureCheckBox.setChecked(True)
         self.directionCombo.setCurrentIndex(0)  # Default to "Start to End (0)"
-        
+
         # Set default values for obstacles
         self.includeObstaclesCheckBox.setChecked(False)
         self.obstacleBufferSpin.setValue(10.0)
         self.minObstacleHeightSpin.setValue(5.0)
-        
+
         # Set default values for shadow analysis
         self.enableShadowAnalysisCheckBox.setChecked(False)
         self.shadowToleranceSpin.setValue(5.0)
-        
+
         # Connect shadow analysis checkbox to enable/disable shadow tolerance control
         self.enableShadowAnalysisCheckBox.toggled.connect(self._toggle_shadow_controls)
-        
+
         # Initialize obstacles group as disabled
         self._toggle_obstacles_group(False)
         self._toggle_shadow_controls(False)
-        
+
         # UI-08: Connect inline width validation
         self.initialWidthSpin.valueChanged.connect(self._validate_widths)
         self.maxWidthSpin.valueChanged.connect(self._validate_widths)
@@ -160,39 +160,39 @@ class TofpaDockWidget(QDockWidget, FORM_CLASS):
     def _apply_geometry_filters(self):
         """Apply geometry-specific filters to layer combo boxes"""
         from qgis.core import QgsProject
-        
+
         # Get all vector layers
         all_layers = QgsProject.instance().mapLayers().values()
         vector_layers = [layer for layer in all_layers if hasattr(layer, 'geometryType')]
-        
+
         # Lists to store layers that don't match geometry requirements
         non_line_layers = []
         non_point_layers = []
         non_obstacle_layers = []  # For obstacles: points or polygons only
-        
+
         for layer in vector_layers:
             try:
                 geom_type = layer.geometryType()
-                
+
                 # For runway combo: exclude non-line layers
                 if geom_type != WKB_LINE_GEOM:
                     non_line_layers.append(layer)
-                
-                # For threshold combo: exclude non-point layers  
+
+                # For threshold combo: exclude non-point layers
                 if geom_type != WKB_POINT_GEOM:
                     non_point_layers.append(layer)
-                
+
                 # For obstacles combo: exclude non-point and non-polygon layers
                 if geom_type not in [WKB_POINT_GEOM, WKB_POLYGON_GEOM]:
                     non_obstacle_layers.append(layer)
-                    
+
             except Exception:
                 logger.debug("Could not determine geometry type for layer, excluding from all combos", exc_info=True)
                 # If we can't determine geometry type, exclude from all
                 non_line_layers.append(layer)
                 non_point_layers.append(layer)
                 non_obstacle_layers.append(layer)
-        
+
         # Apply filters
         self.runwayLayerCombo.setExceptedLayerList(non_line_layers)
         self.thresholdLayerCombo.setExceptedLayerList(non_point_layers)
@@ -247,7 +247,8 @@ class TofpaDockWidget(QDockWidget, FORM_CLASS):
             else:
                 self.endElevationSpin.setToolTip(
                     "Elevation at the Departure End of the Runway (ZE). "
-                    "The TOFPA OCS surface starts from this elevation and climbs at 1.2\u2009%\u2009\u2014 ICAO Doc 8168 Vol I \u00a73.1.3."
+                    "The TOFPA OCS surface starts from this elevation and climbs at "
+                    "1.2\u2009%\u2009\u2014 ICAO Doc 8168 Vol I \u00a73.1.3."
                 )
         except Exception:
             logger.debug("Elevation validation failed", exc_info=True)
@@ -289,10 +290,10 @@ class TofpaDockWidget(QDockWidget, FORM_CLASS):
             # Shadow analysis is only available when obstacles analysis is enabled
             obstacles_enabled = self.includeObstaclesCheckBox.isChecked()
             final_enabled = enabled and obstacles_enabled
-            
+
             self.shadowToleranceLabel.setEnabled(final_enabled)
             self.shadowToleranceSpin.setEnabled(final_enabled)
-            
+
             # If obstacles are not enabled, disable shadow analysis checkbox
             if not obstacles_enabled:
                 self.enableShadowAnalysisCheckBox.setEnabled(False)
@@ -305,7 +306,7 @@ class TofpaDockWidget(QDockWidget, FORM_CLASS):
     def on_calculate_clicked(self):
         """Emit signal when calculate button is clicked"""
         self.calculateClicked.emit()
-    
+
     def on_close_clicked(self):
         """Emit signal when close button is clicked"""
         self.closeClicked.emit()
@@ -314,7 +315,7 @@ class TofpaDockWidget(QDockWidget, FORM_CLASS):
         """Get all parameters from the UI"""
         # Get direction value: index 0 = 0 (start to end), index 1 = -1 (end to start)
         direction_value = 0 if self.directionCombo.currentIndex() == 0 else -1
-        
+
         return {
             'width_tofpa': self.initialWidthSpin.value(),
             'max_width_tofpa': self.maxWidthSpin.value(),
@@ -322,19 +323,35 @@ class TofpaDockWidget(QDockWidget, FORM_CLASS):
             'z0': self.initialElevationSpin.value(),
             'ze': self.endElevationSpin.value(),
             's': direction_value,
-            'runway_layer_id': self.runwayLayerCombo.currentLayer().id() if self.runwayLayerCombo.currentLayer() else None,
-            'threshold_layer_id': self.thresholdLayerCombo.currentLayer().id() if self.thresholdLayerCombo.currentLayer() else None,
+            'runway_layer_id': (
+                self.runwayLayerCombo.currentLayer().id()
+                if self.runwayLayerCombo.currentLayer() else None
+            ),
+            'threshold_layer_id': (
+                self.thresholdLayerCombo.currentLayer().id()
+                if self.thresholdLayerCombo.currentLayer() else None
+            ),
             'use_selected_feature': self.useSelectedFeatureCheckBox.isChecked(),
             'export_kmz': self.exportToKmzCheckBox.isChecked(),
             'export_aixm': self.exportToAixmCheckBox.isChecked(),
             # New obstacles parameters
             'include_obstacles': self.includeObstaclesCheckBox.isChecked(),
-            'obstacles_layer_id': self.obstaclesLayerCombo.currentLayer().id() if self.obstaclesLayerCombo.currentLayer() and self.includeObstaclesCheckBox.isChecked() else None,
-            'obstacle_height_field': self.obstacleHeightFieldCombo.currentText() if self.includeObstaclesCheckBox.isChecked() else None,
+            'obstacles_layer_id': (
+                self.obstaclesLayerCombo.currentLayer().id()
+                if self.obstaclesLayerCombo.currentLayer() and self.includeObstaclesCheckBox.isChecked()
+                else None
+            ),
+            'obstacle_height_field': (
+                self.obstacleHeightFieldCombo.currentText()
+                if self.includeObstaclesCheckBox.isChecked() else None
+            ),
             'obstacle_buffer': self.obstacleBufferSpin.value(),
             'min_obstacle_height': self.minObstacleHeightSpin.value(),
             # New shadow analysis parameters
-            'enable_shadow_analysis': self.enableShadowAnalysisCheckBox.isChecked() and self.includeObstaclesCheckBox.isChecked(),
+            'enable_shadow_analysis': (
+                self.enableShadowAnalysisCheckBox.isChecked()
+                and self.includeObstaclesCheckBox.isChecked()
+            ),
             'shadow_tolerance': self.shadowToleranceSpin.value(),
             # Contour generation (issue #27)
             'contour_interval_m': int(round(self.contourIntervalSpin.value())),

@@ -7,6 +7,7 @@
  ***************************************************************************/
 """
 
+
 # noinspection PyPep8Naming
 def classFactory(iface):  # pylint: disable=invalid-name
     """Load TOFPA class from file TOFPA.

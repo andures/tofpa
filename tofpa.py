@@ -15,14 +15,16 @@
  ***************************************************************************/
 """
 from qgis.PyQt.QtCore import QCoreApplication
-from qgis.PyQt.QtGui import QColor, QIcon
+from qgis.PyQt.QtGui import QIcon
 from qgis.PyQt.QtWidgets import QFileDialog, QAction
 from .utils.compat import FIELD_INT, FIELD_STRING, FIELD_DOUBLE, DOCK_RIGHT  # MIGA-01, MIGA-05
-from qgis.core import (QgsProject, QgsVectorLayer, QgsFeature, QgsGeometry,
-                      QgsPoint, QgsPointXY, QgsField, QgsPolygon, QgsLineString, Qgis,
-                      QgsFillSymbol, QgsLineSymbol, QgsMarkerSymbol, QgsVectorFileWriter, QgsCoordinateTransform,
-                      QgsCoordinateReferenceSystem, QgsWkbTypes,
-                      QgsPalLayerSettings, QgsVectorLayerSimpleLabeling)
+from qgis.core import (
+    QgsProject, QgsVectorLayer, QgsFeature, QgsGeometry,
+    QgsPoint, QgsField, QgsPolygon, QgsLineString, Qgis,
+    QgsFillSymbol, QgsLineSymbol, QgsVectorFileWriter, QgsCoordinateTransform,
+    QgsCoordinateReferenceSystem,
+    QgsPalLayerSettings, QgsVectorLayerSimpleLabeling,
+)
 
 import logging
 import os.path
@@ -88,7 +90,8 @@ class TOFPA:
         add_to_toolbar=True,
         status_tip=None,
         whats_this=None,
-        parent=None):
+        parent=None,
+    ):
         """Add a toolbar icon to the toolbar."""
         icon = QIcon(icon_path)
         action = QAction(icon, text, parent)
@@ -214,15 +217,15 @@ class TOFPA:
                 return selected_features[0]
             elif len(selected_features) > 1:
                 self.iface.messageBar().pushMessage(
-                    "Error", 
-                    f"Please select only one {feature_type} in layer '{layer.name()}'.", 
+                    "Error",
+                    f"Please select only one {feature_type} in layer '{layer.name()}'.",
                     level=Qgis.Critical
                 )
                 return None
             else:
                 self.iface.messageBar().pushMessage(
-                    "Error", 
-                    f"No {feature_type} selected in layer '{layer.name()}'. Please select one.", 
+                    "Error",
+                    f"No {feature_type} selected in layer '{layer.name()}'. Please select one.",
                     level=Qgis.Critical
                 )
                 return None
@@ -232,8 +235,9 @@ class TOFPA:
                 return all_features[0]
             elif len(all_features) > 1:
                 self.iface.messageBar().pushMessage(
-                    "Error", 
-                    f"Layer '{layer.name()}' has more than one {feature_type}. Please select one and check 'Use selected features only'.", 
+                    "Error",
+                    f"Layer '{layer.name()}' has more than one {feature_type}. "
+                    "Please select one and check 'Use selected features only'.",
                     level=Qgis.Critical
                 )
                 return None
@@ -291,25 +295,21 @@ class TOFPA:
         export_aixm = params.export_aixm
         include_obstacles = obs_params.include_obstacles
         obstacles_layer_id = obs_params.obstacles_layer_id
-        obstacle_height_field = obs_params.obstacle_height_field
-        obstacle_buffer = obs_params.obstacle_buffer
-        min_obstacle_height = obs_params.min_obstacle_height
         enable_shadow_analysis = obs_params.enable_shadow_analysis
-        shadow_tolerance = obs_params.shadow_tolerance
 
         map_srid = self.iface.mapCanvas().mapSettings().destinationCrs().authid()
-        
+
         # Get runway layer by ID
         runway_layer = QgsProject.instance().mapLayer(runway_layer_id)
         if not runway_layer:
             self.iface.messageBar().pushMessage("Error", "Selected runway layer not found!", level=Qgis.Critical)
             return False
-        
+
         # Get single runway feature using robust selection logic
         runway_feature = self.get_single_feature(runway_layer, use_selected_feature, "runway feature")
         if not runway_feature:
             return False
-        
+
         # Get runway geometry (from original script)
         rwy_geom = runway_feature.geometry()
         rwy_length = rwy_geom.length()
@@ -317,13 +317,15 @@ class TOFPA:
         # Verify with ICAO Doc 8168 whether runway slope should offset Z values of pt_01D/pt_02D/pt_03D.
         rwy_slope = (z0 - ze) / rwy_length if rwy_length > 0 else 0  # noqa: F841
         logger.debug("Runway length: %s", rwy_length)
-        
+
         # Get the azimuth of the line (from original script)
         geom = runway_feature.geometry().asPolyline()
         if len(geom) < 2:
-            self.iface.messageBar().pushMessage("Error", "Runway geometry must have at least 2 points!", level=Qgis.Critical)
+            self.iface.messageBar().pushMessage(
+                "Error", "Runway geometry must have at least 2 points!", level=Qgis.Critical
+            )
             return False
-            
+
         # Calculate azimuth based on runway direction (simplified logic)
         # s=0 means takeoff from start to end, s=-1 means takeoff from end to start
         if s == 0:
@@ -331,50 +333,50 @@ class TOFPA:
             start_point = QgsPoint(geom[0])   # first point (runway start)
             end_point = QgsPoint(geom[-1])    # last point (runway end)
         else:  # s == -1
-            # Takeoff from end to start: use last to first point  
+            # Takeoff from end to start: use last to first point
             start_point = QgsPoint(geom[-1])  # last point (runway end)
             end_point = QgsPoint(geom[0])     # first point (runway start)
-        
+
         # Calculate takeoff direction azimuth directly
         azimuth = start_point.azimuth(end_point)  # azimuth in takeoff direction
         bazimuth = azimuth + 180  # opposite direction (backward from azimuth)
-        
+
         logger.debug("Start point: %s, %s", start_point.x(), start_point.y())
         logger.debug("End point: %s, %s", end_point.x(), end_point.y())
         logger.debug("Takeoff azimuth: %s", azimuth)
         logger.debug("Backward azimuth: %s", bazimuth)
         logger.debug("s parameter: %s", s)
-        
+
         # Get the threshold point from selected layer
         threshold_layer = QgsProject.instance().mapLayer(threshold_layer_id)
         if not threshold_layer:
             self.iface.messageBar().pushMessage("Error", "Selected threshold layer not found!", level=Qgis.Critical)
             return False
-        
+
         # Get single threshold feature using robust selection logic
         threshold_feature = self.get_single_feature(threshold_layer, use_selected_feature, "threshold feature")
         if not threshold_feature:
             return False
-        
+
         # Get threshold point (from original script)
         new_geom = QgsPoint(threshold_feature.geometry().asPoint())
         new_geom.addZValue(z0)
-        
+
         logger.debug("Threshold point: %s, %s, %s", new_geom.x(), new_geom.y(), new_geom.z())
         logger.debug("Parameters - Width: %s, Max Width: %s", width_tofpa, max_width_tofpa)
         logger.debug("CWY Length: %s, Z0: %s, ZE: %s", cwy_length, z0, ze)
-        
+
         list_pts = []
         # Origin (from original script)
         pt_0D = new_geom
-        
+
         # Distance for surface start (from original script)
         if cwy_length == 0:
             dD = 0  # there is a condition to use the runway strip to analyze
         else:
             dD = cwy_length
         logger.debug("dD (distance for surface start): %s", dD)
-        
+
         # Calculate all points for the TOFPA surface using PROJECT method (ORIGINAL LOGIC)
         # First project backward from threshold to get the start point (if CWY length > 0)
         pt_01D = new_geom.project(dD, azimuth)  # Project from threshold by CWY length in the direction of the flight
@@ -384,7 +386,7 @@ class TOFPA:
         pt_01DL.setZ(pt_01D.z())  # QgsPoint.project() returns 2D point; restore Z explicitly
         pt_01DR = pt_01D.project(width_tofpa/2, azimuth-90)  # Use azimuth for perpendicular direction
         pt_01DR.setZ(pt_01D.z())
-        
+
         # Distance to reach maximum width (from original script - ALL use azimuth for forward projection)
         pt_02D = pt_01D.project(((max_width_tofpa/2-width_tofpa/2)/TOFPA_DIVERGENCE_RATIO), azimuth)
         pt_02D.setZ(ze+((max_width_tofpa/2-width_tofpa/2)/TOFPA_DIVERGENCE_RATIO)*TOFPA_CLIMB_GRADIENT)
@@ -392,7 +394,7 @@ class TOFPA:
         pt_02DL.setZ(pt_02D.z())  # QgsPoint.project() returns 2D point; restore Z explicitly
         pt_02DR = pt_02D.project(max_width_tofpa/2, azimuth-90)  # Use azimuth for perpendicular
         pt_02DR.setZ(pt_02D.z())
-        
+
         # Distance to end of TakeOff Climb Surface (from original script - ALL use azimuth for forward projection)
         pt_03D = pt_01D.project(TOFPA_SURFACE_LENGTH, azimuth)
         pt_03D.setZ(ze+TOFPA_SURFACE_LENGTH*TOFPA_CLIMB_GRADIENT)
@@ -400,38 +402,40 @@ class TOFPA:
         pt_03DL.setZ(pt_03D.z())  # QgsPoint.project() returns 2D point; restore Z explicitly
         pt_03DR = pt_03D.project(max_width_tofpa/2, azimuth-90)  # Use azimuth for perpendicular
         pt_03DR.setZ(pt_03D.z())
-        
+
         list_pts.extend((pt_0D, pt_01D, pt_01DL, pt_01DR, pt_02D, pt_02DL, pt_02DR, pt_03D, pt_03DL, pt_03DR))
-        
+
         # Create reference line perpendicular to trajectory at start point (3000m each side)
         # The start point depends on whether CWY exists or not
         reference_start_point = pt_01D  # This is the calculated start point (considers CWY)
-        
+
         # Create points 3000m on each side perpendicular to the azimuth
         ref_line_left = reference_start_point.project(TOFPA_REF_LINE_HALF_WIDTH, azimuth+90)  # 3000m to the left
         ref_line_right = reference_start_point.project(TOFPA_REF_LINE_HALF_WIDTH, azimuth-90)  # 3000m to the right
-        
+
         # Set same elevation as start point
         ref_line_left.setZ(reference_start_point.z())
         ref_line_right.setZ(reference_start_point.z())
-        
-        logger.debug("Reference line left point: %s, %s, %s", ref_line_left.x(), ref_line_left.y(), ref_line_left.z())
-        logger.debug("Reference line right point: %s, %s, %s", ref_line_right.x(), ref_line_right.y(), ref_line_right.z())
-        
+
+        logger.debug("Reference line left point: %s, %s, %s",
+                     ref_line_left.x(), ref_line_left.y(), ref_line_left.z())
+        logger.debug("Reference line right point: %s, %s, %s",
+                     ref_line_right.x(), ref_line_right.y(), ref_line_right.z())
+
         # Create reference line memory layer
         ref_layer = QgsVectorLayer(f"LineStringZ?crs={map_srid}", "reference_line", "memory")
         ref_id_field = QgsField('id', FIELD_INT)
         ref_label_field = QgsField('txt-label', FIELD_STRING)
         ref_layer.dataProvider().addAttributes([ref_id_field, ref_label_field])
         ref_layer.updateFields()
-        
+
         # Create the reference line feature
         ref_feature = QgsFeature()
         ref_line_geom = QgsLineString([ref_line_left, ref_line_right])
         ref_feature.setGeometry(QgsGeometry(ref_line_geom))
         ref_feature.setAttributes([1, 'tofpa reference line'])
         ref_layer.dataProvider().addFeatures([ref_feature])
-        
+
         # Style the reference line (red color, width 0.25)
         ref_symbol = QgsLineSymbol.createSimple({
             'color': '255,0,0,255',  # Red color
@@ -439,10 +443,10 @@ class TOFPA:
         })
         ref_layer.renderer().setSymbol(ref_symbol)
         ref_layer.triggerRepaint()
-        
+
         # Add reference line layer to map
         QgsProject.instance().addMapLayers([ref_layer])
-        
+
         # Creation of the Take Off Climb Surfaces (from original script)
         # Create memory layer
         v_layer = QgsVectorLayer(f"PolygonZ?crs={map_srid}", "RWY_TOFPA_AOC_TypeA", "memory")
@@ -451,7 +455,7 @@ class TOFPA:
         v_layer.dataProvider().addAttributes([id_field])
         v_layer.dataProvider().addAttributes([name_field])
         v_layer.updateFields()
-        
+
         # Take Off Climb Surface Creation (from original script)
         surface_area = [pt_03DR, pt_03DL, pt_02DL, pt_01DL, pt_01DR, pt_02DR]
         pr = v_layer.dataProvider()
@@ -459,10 +463,10 @@ class TOFPA:
         seg.setGeometry(QgsPolygon(QgsLineString(surface_area), rings=[]))
         seg.setAttributes([13, 'TOFPA AOC Type A'])
         pr.addFeatures([seg])
-        
+
         # Load PolygonZ Layer to map canvas (from original script)
         QgsProject.instance().addMapLayers([v_layer])
-        
+
         # Change style of layer (from original script but using modern syntax)
         symbol = QgsFillSymbol.createSimple({
             'color': '128,128,128,102',  # Grey with 40% opacity
@@ -471,7 +475,7 @@ class TOFPA:
         })
         v_layer.renderer().setSymbol(symbol)
         v_layer.triggerRepaint()
-        
+
         # Contour layer generation (issue #27)
         if params.contour_interval_m > 0:
             _dist_to_max_w = (max_width_tofpa / 2 - width_tofpa / 2) / TOFPA_DIVERGENCE_RATIO
@@ -536,53 +540,58 @@ class TOFPA:
                 )
                 if obstacles_info:
                     obstacles_layers = obstacles_info['layers']
-                    
+
                     # Create result message including shadow analysis if performed
-                    message = f"Analyzed {obstacles_info['total_obstacles']} obstacles, {obstacles_info['critical_obstacles']} are critical"
-                    
+                    total = obstacles_info['total_obstacles']
+                    critical = obstacles_info['critical_obstacles']
+                    message = f"Analyzed {total} obstacles, {critical} are critical"
+
                     if enable_shadow_analysis and 'shadow_results' in obstacles_info:
                         shadow_results = obstacles_info['shadow_results']
                         shadowed_count = len(shadow_results.get('shadowed_obstacles', []))
-                        visible_count = len([obs for obs in shadow_results.get('visible_obstacles', []) if obs.get('is_critical', False)])
+                        visible_count = len([
+                            obs for obs in shadow_results.get('visible_obstacles', [])
+                            if obs.get('is_critical', False)
+                        ])
                         message += f", {shadowed_count} shadowed, {visible_count} visible"
-                    
+
                     # Display obstacles analysis results
                     self.iface.messageBar().pushMessage(
-                        "Obstacles Analysis:", 
-                        message, 
+                        "Obstacles Analysis:",
+                        message,
                         level=Qgis.Info
                     )
             except Exception as e:
                 logger.warning("Obstacles analysis failed: %s", e)
                 self.iface.messageBar().pushMessage(
-                    "Warning", 
-                    f"Obstacles analysis failed: {str(e)}", 
+                    "Warning",
+                    f"Obstacles analysis failed: {str(e)}",
                     level=Qgis.Warning
                 )
-        
+
         # Prepare layers for export (include obstacles if they exist)
         layers_to_export = [v_layer, ref_layer] + obstacles_layers
-        
+
         # Export to KMZ if requested
         if export_kmz:
             self.export_to_kmz(layers_to_export)
-        
+
         # Export to AIXM if requested
         if export_aixm:
             self.export_to_aixm(layers_to_export)
-        
+
         # Zoom to layer (from original script)
         v_layer.selectAll()
         canvas = self.iface.mapCanvas()
         canvas.zoomToSelected(v_layer)
         v_layer.removeSelection()
-        
+
         # Get canvas scale (from original script)
         sc = canvas.scale()
         if sc < 20000:
             sc = 20000
         canvas.zoomScale(sc)
-        
+
         return True
 
     def process_survey_obstacles(
@@ -685,116 +694,115 @@ class TOFPA:
             "shadow_results": shadow_results,
         }
 
-
     def export_to_kmz(self, layers: list) -> bool:
         """Export layers to KMZ format for Google Earth with proper styling."""
         # Handle both single layer and list of layers
         if not isinstance(layers, list):
             layers = [layers]
-        
+
         # Check if any layer has features
         has_features = any(layer.featureCount() > 0 for layer in layers)
         if not has_features:
             self.iface.messageBar().pushMessage(
-                "Error", 
-                "No features to export in any layer", 
+                "Error",
+                "No features to export in any layer",
                 level=Qgis.Critical
             )
             return False
-            
+
         # Ask user for save location
         file_dialog = QFileDialog()
         file_dialog.setDefaultSuffix('kmz')
         file_path, _ = file_dialog.getSaveFileName(
-            None, 
-            "Save KMZ File", 
-            "", 
+            None,
+            "Save KMZ File",
+            "",
             "KMZ Files (*.kmz)"
         )
-        
+
         if not file_path:
             self.iface.messageBar().pushMessage(
-                "Info", 
-                "KMZ export cancelled by user", 
+                "Info",
+                "KMZ export cancelled by user",
                 level=Qgis.Info
             )
             return False
-        
+
         # Ensure file has .kmz extension
         if not file_path.lower().endswith('.kmz'):
             file_path += '.kmz'
-        
+
         # Convert KML to KMZ (zip multiple KML files)
         import zipfile
         try:
             with zipfile.ZipFile(file_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
                 temp_files = []
-                
+
                 for i, layer in enumerate(layers):
                     if layer.featureCount() == 0:
                         continue
-                        
+
                     # Set up KML options with proper styling and absolute altitude
                     options = QgsVectorFileWriter.SaveVectorOptions()
                     options.driverName = "KML"
                     options.layerName = layer.name()
-                    
+
                     # Set KML to use absolute altitude (not clamped to ground)
                     options.datasourceOptions = ['ALTITUDE_MODE=absolute']
-                    
+
                     # KML uses EPSG:4326 (WGS84)
                     crs_4326 = QgsCoordinateReferenceSystem("EPSG:4326")
                     options.ct = QgsCoordinateTransform(
-                        layer.crs(), 
-                        crs_4326, 
+                        layer.crs(),
+                        crs_4326,
                         QgsProject.instance()
                     )
-                    
+
                     # Write to temporary KML
                     temp_kml = file_path.replace('.kmz', f'_{i}_{layer.name()}.kml')
                     temp_files.append(temp_kml)
-                    
+
                     result = QgsVectorFileWriter.writeAsVectorFormatV2(
                         layer,
                         temp_kml,
                         QgsProject.instance().transformContext(),
                         options
                     )
-                    
+
                     if result[0] != QgsVectorFileWriter.NoError:
                         self.iface.messageBar().pushMessage(
-                            "Error", 
-                            f"Failed to export layer {layer.name()} to KML: {result[1]}", 
+                            "Error",
+                            f"Failed to export layer {layer.name()} to KML: {result[1]}",
                             level=Qgis.Critical
                         )
                         continue
-                    
+
                     # Add KML file to ZIP
                     zipf.write(temp_kml, os.path.basename(temp_kml))
-                
+
                 # Remove temporary KML files
                 for temp_file in temp_files:
                     try:
                         os.remove(temp_file)
                     except PermissionError:
                         self.iface.messageBar().pushMessage(
-                            "Warning", 
-                            f"Could not delete temporary KML file: {temp_file}", 
+                            "Warning",
+                            f"Could not delete temporary KML file: {temp_file}",
                             level=Qgis.Warning
                         )
-            
+
             self.iface.messageBar().pushMessage(
-                "Success", 
-                f"Exported {len(layers)} layers to KMZ: {file_path}", 
+                "Success",
+                f"Exported {len(layers)} layers to KMZ: {file_path}",
                 level=Qgis.Success
             )
             return True
-            
+
         except Exception as e:
             logger.error("Failed to create KMZ file: %s", e)
             self.iface.messageBar().pushMessage(
-                "Error", 
-                f"Failed to create KMZ file: {str(e)}", 
+                "Error",
+                f"Failed to create KMZ file: {str(e)}",
                 level=Qgis.Critical
             )
             return False
@@ -804,55 +812,54 @@ class TOFPA:
         # Handle both single layer and list of layers
         if not isinstance(layers, list):
             layers = [layers]
-        
+
         # Check if any layer has features
         has_features = any(layer.featureCount() > 0 for layer in layers)
         if not has_features:
             self.iface.messageBar().pushMessage(
-                "Error", 
-                "No features to export in any layer", 
+                "Error",
+                "No features to export in any layer",
                 level=Qgis.Critical
             )
             return False
-            
+
         # Ask user for save location
         file_dialog = QFileDialog()
         file_dialog.setDefaultSuffix('xml')
         file_path, _ = file_dialog.getSaveFileName(
-            None, 
-            "Save AIXM File", 
-            "", 
+            None,
+            "Save AIXM File",
+            "",
             "AIXM Files (*.xml)"
         )
-        
+
         if not file_path:
             self.iface.messageBar().pushMessage(
-                "Info", 
-                "AIXM export cancelled by user", 
+                "Info",
+                "AIXM export cancelled by user",
                 level=Qgis.Info
             )
             return False
-        
+
         # Ensure file has .xml extension
         if not file_path.lower().endswith('.xml'):
             file_path += '.xml'
-        
+
         try:
             generate_aixm_file(layers, file_path)
 
             self.iface.messageBar().pushMessage(
                 "Success",
-                f"Exported {len(layers)} layers to AIXM: {file_path}", 
+                f"Exported {len(layers)} layers to AIXM: {file_path}",
                 level=Qgis.Success
             )
             return True
-            
+
         except Exception as e:
             logger.error("Failed to create AIXM file: %s", e)
             self.iface.messageBar().pushMessage(
-                "Error", 
-                f"Failed to create AIXM file: {str(e)}", 
+                "Error",
+                f"Failed to create AIXM file: {str(e)}",
                 level=Qgis.Critical
             )
             return False
-

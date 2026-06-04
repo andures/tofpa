@@ -10,16 +10,13 @@ message-bar notifications itself.
 from __future__ import annotations
 
 import uuid
-import xml.etree.ElementTree as ET
+import xml.etree.ElementTree as ET  # nosec B405 - generates AIXM XML, never parses untrusted input
 from datetime import datetime
-from typing import Any
-
 from qgis.core import (
     QgsCoordinateReferenceSystem,
     QgsCoordinateTransform,
     QgsGeometry,
     QgsProject,
-    QgsWkbTypes,
 )
 from .compat import WKB_POLYGON_GEOM, WKB_LINE_GEOM  # MIGA-02
 
