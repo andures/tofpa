@@ -1,23 +1,15 @@
 # -*- coding: utf-8 -*-
 """
-/***************************************************************************
- FLYGHT7 -  TOFPA
-                                 A QGIS plugin
- Takeoff and Final Approach Analysis Tool
+TOFPA — QGIS plugin for Take-Off Flight Path Analysis.
 
- /***************************************************************************
- *                                                                         *
- *   This program is free software; you can redistribute it and/or modify  *
- *   it under the terms of the GNU General Public License as published by  *
- *   the Free Software Foundation; either version 2 of the License, or     *
- *   (at your option) any later version.                                   *
- *                                                                         *
- ***************************************************************************/
+Calculates the AOC Type A obstacle clearance surface per ICAO Doc 8168,
+Vol I §3.1.3, generates contour layers, analyses obstacles, and exports
+results to KMZ and AIXM 5.1.1.
 """
 from qgis.PyQt.QtCore import QCoreApplication
 from qgis.PyQt.QtGui import QColor, QIcon
 from qgis.PyQt.QtWidgets import QFileDialog, QAction
-from .utils.compat import FIELD_INT, FIELD_STRING, FIELD_DOUBLE, DOCK_RIGHT  # MIGA-01, MIGA-05
+from .utils.compat import FIELD_INT, FIELD_STRING, FIELD_DOUBLE, DOCK_RIGHT
 from qgis.core import (QgsProject, QgsVectorLayer, QgsFeature, QgsGeometry,
                       QgsPoint, QgsPointXY, QgsField, QgsPolygon, QgsLineString, Qgis,
                       QgsFillSymbol, QgsLineSymbol, QgsMarkerSymbol, QgsVectorFileWriter, QgsCoordinateTransform,
@@ -27,22 +19,19 @@ from qgis.core import (QgsProject, QgsVectorLayer, QgsFeature, QgsGeometry,
 import logging
 import os.path
 
-# Module logger — must be defined before any try/except that uses it
 logger = logging.getLogger('TOFPA')
 
-# Import the dockwidget with error handling
 try:
     from .tofpa_dockwidget import TofpaDockWidget
 except ImportError as e:
     logger.error("Import error: %s", e)
-    # Fallback import
     import sys
     import os
     plugin_dir = os.path.dirname(__file__)
     sys.path.insert(0, plugin_dir)
     from tofpa_dockwidget import TofpaDockWidget
 
-# Core modules — imported with relative/absolute fallback for QGIS plugin compatibility
+# Relative imports fail when the plugin is loaded via sys.path rather than as a package
 try:
     from .core.models import ObstacleParams, TofpaParams
     from .core.obstacles import ObstacleAnalyzer
@@ -277,7 +266,6 @@ class TOFPA:
             )
             return False
 
-        # Unpack into local names — keeps the rest of the geometry code unchanged
         width_tofpa = params.width_tofpa
         max_width_tofpa = params.max_width_tofpa
         cwy_length = params.cwy_length
@@ -299,45 +287,37 @@ class TOFPA:
 
         map_srid = self.iface.mapCanvas().mapSettings().destinationCrs().authid()
         
-        # Get runway layer by ID
         runway_layer = QgsProject.instance().mapLayer(runway_layer_id)
         if not runway_layer:
             self.iface.messageBar().pushMessage("Error", "Selected runway layer not found!", level=Qgis.Critical)
             return False
         
-        # Get single runway feature using robust selection logic
         runway_feature = self.get_single_feature(runway_layer, use_selected_feature, "runway feature")
         if not runway_feature:
             return False
         
-        # Get runway geometry (from original script)
         rwy_geom = runway_feature.geometry()
         rwy_length = rwy_geom.length()
         # TODO (BUG-05): rwy_slope is calculated but never applied to surface point elevations.
         # Verify with ICAO Doc 8168 whether runway slope should offset Z values of pt_01D/pt_02D/pt_03D.
         rwy_slope = (z0 - ze) / rwy_length if rwy_length > 0 else 0  # noqa: F841
         logger.debug("Runway length: %s", rwy_length)
-        
-        # Get the azimuth of the line (from original script)
+
         geom = runway_feature.geometry().asPolyline()
         if len(geom) < 2:
             self.iface.messageBar().pushMessage("Error", "Runway geometry must have at least 2 points!", level=Qgis.Critical)
             return False
             
-        # Calculate azimuth based on runway direction (simplified logic)
-        # s=0 means takeoff from start to end, s=-1 means takeoff from end to start
+        # s=0: takeoff start→end; s=-1: takeoff end→start
         if s == 0:
-            # Takeoff from start to end: use first to last point
-            start_point = QgsPoint(geom[0])   # first point (runway start)
-            end_point = QgsPoint(geom[-1])    # last point (runway end)
-        else:  # s == -1
-            # Takeoff from end to start: use last to first point  
-            start_point = QgsPoint(geom[-1])  # last point (runway end)
-            end_point = QgsPoint(geom[0])     # first point (runway start)
-        
-        # Calculate takeoff direction azimuth directly
-        azimuth = start_point.azimuth(end_point)  # azimuth in takeoff direction
-        bazimuth = azimuth + 180  # opposite direction (backward from azimuth)
+            start_point = QgsPoint(geom[0])
+            end_point = QgsPoint(geom[-1])
+        else:
+            start_point = QgsPoint(geom[-1])
+            end_point = QgsPoint(geom[0])
+
+        azimuth = start_point.azimuth(end_point)
+        bazimuth = azimuth + 180
         
         logger.debug("Start point: %s, %s", start_point.x(), start_point.y())
         logger.debug("End point: %s, %s", end_point.x(), end_point.y())
@@ -345,18 +325,15 @@ class TOFPA:
         logger.debug("Backward azimuth: %s", bazimuth)
         logger.debug("s parameter: %s", s)
         
-        # Get the threshold point from selected layer
         threshold_layer = QgsProject.instance().mapLayer(threshold_layer_id)
         if not threshold_layer:
             self.iface.messageBar().pushMessage("Error", "Selected threshold layer not found!", level=Qgis.Critical)
             return False
         
-        # Get single threshold feature using robust selection logic
         threshold_feature = self.get_single_feature(threshold_layer, use_selected_feature, "threshold feature")
         if not threshold_feature:
             return False
         
-        # Get threshold point (from original script)
         new_geom = QgsPoint(threshold_feature.geometry().asPoint())
         new_geom.addZValue(z0)
         
@@ -365,53 +342,43 @@ class TOFPA:
         logger.debug("CWY Length: %s, Z0: %s, ZE: %s", cwy_length, z0, ze)
         
         list_pts = []
-        # Origin (from original script)
         pt_0D = new_geom
-        
-        # Distance for surface start (from original script)
-        if cwy_length == 0:
-            dD = 0  # there is a condition to use the runway strip to analyze
-        else:
-            dD = cwy_length
+
+        dD = cwy_length  # 0 when no clearway; surface begins at threshold
         logger.debug("dD (distance for surface start): %s", dD)
         
-        # Calculate all points for the TOFPA surface using PROJECT method (ORIGINAL LOGIC)
-        # First project backward from threshold to get the start point (if CWY length > 0)
-        pt_01D = new_geom.project(dD, azimuth)  # Project from threshold by CWY length in the direction of the flight
+        # pt_01D: DER (Departure End of Runway), start of OCS
+        pt_01D = new_geom.project(dD, azimuth)
         pt_01D.setZ(ze)
         logger.debug("pt_01D (start point): %s, %s, %s", pt_01D.x(), pt_01D.y(), pt_01D.z())
-        pt_01DL = pt_01D.project(width_tofpa/2, azimuth+90)  # Use azimuth for perpendicular direction
-        pt_01DL.setZ(pt_01D.z())  # QgsPoint.project() returns 2D point; restore Z explicitly
-        pt_01DR = pt_01D.project(width_tofpa/2, azimuth-90)  # Use azimuth for perpendicular direction
+        # project() returns 2D — Z must be restored after every call
+        pt_01DL = pt_01D.project(width_tofpa/2, azimuth+90)
+        pt_01DL.setZ(pt_01D.z())
+        pt_01DR = pt_01D.project(width_tofpa/2, azimuth-90)
         pt_01DR.setZ(pt_01D.z())
-        
-        # Distance to reach maximum width (from original script - ALL use azimuth for forward projection)
+
+        # pt_02D: end of the diverging zone; surface reaches maximum width here
         pt_02D = pt_01D.project(((max_width_tofpa/2-width_tofpa/2)/TOFPA_DIVERGENCE_RATIO), azimuth)
         pt_02D.setZ(ze+((max_width_tofpa/2-width_tofpa/2)/TOFPA_DIVERGENCE_RATIO)*TOFPA_CLIMB_GRADIENT)
-        pt_02DL = pt_02D.project(max_width_tofpa/2, azimuth+90)  # Use azimuth for perpendicular
-        pt_02DL.setZ(pt_02D.z())  # QgsPoint.project() returns 2D point; restore Z explicitly
-        pt_02DR = pt_02D.project(max_width_tofpa/2, azimuth-90)  # Use azimuth for perpendicular
+        pt_02DL = pt_02D.project(max_width_tofpa/2, azimuth+90)
+        pt_02DL.setZ(pt_02D.z())
+        pt_02DR = pt_02D.project(max_width_tofpa/2, azimuth-90)
         pt_02DR.setZ(pt_02D.z())
-        
-        # Distance to end of TakeOff Climb Surface (from original script - ALL use azimuth for forward projection)
+
+        # pt_03D: end of the Takeoff Climb Surface (10 000 m from DER)
         pt_03D = pt_01D.project(TOFPA_SURFACE_LENGTH, azimuth)
         pt_03D.setZ(ze+TOFPA_SURFACE_LENGTH*TOFPA_CLIMB_GRADIENT)
-        pt_03DL = pt_03D.project(max_width_tofpa/2, azimuth+90)  # Use azimuth for perpendicular
-        pt_03DL.setZ(pt_03D.z())  # QgsPoint.project() returns 2D point; restore Z explicitly
-        pt_03DR = pt_03D.project(max_width_tofpa/2, azimuth-90)  # Use azimuth for perpendicular
+        pt_03DL = pt_03D.project(max_width_tofpa/2, azimuth+90)
+        pt_03DL.setZ(pt_03D.z())
+        pt_03DR = pt_03D.project(max_width_tofpa/2, azimuth-90)
         pt_03DR.setZ(pt_03D.z())
         
         list_pts.extend((pt_0D, pt_01D, pt_01DL, pt_01DR, pt_02D, pt_02DL, pt_02DR, pt_03D, pt_03DL, pt_03DR))
         
-        # Create reference line perpendicular to trajectory at start point (3000m each side)
-        # The start point depends on whether CWY exists or not
-        reference_start_point = pt_01D  # This is the calculated start point (considers CWY)
-        
-        # Create points 3000m on each side perpendicular to the azimuth
-        ref_line_left = reference_start_point.project(TOFPA_REF_LINE_HALF_WIDTH, azimuth+90)  # 3000m to the left
-        ref_line_right = reference_start_point.project(TOFPA_REF_LINE_HALF_WIDTH, azimuth-90)  # 3000m to the right
-        
-        # Set same elevation as start point
+        # Reference line: 3 000 m perpendicular to the trajectory at the DER
+        reference_start_point = pt_01D
+        ref_line_left = reference_start_point.project(TOFPA_REF_LINE_HALF_WIDTH, azimuth+90)
+        ref_line_right = reference_start_point.project(TOFPA_REF_LINE_HALF_WIDTH, azimuth-90)
         ref_line_left.setZ(reference_start_point.z())
         ref_line_right.setZ(reference_start_point.z())
         
@@ -425,7 +392,6 @@ class TOFPA:
         ref_layer.dataProvider().addAttributes([ref_id_field, ref_label_field])
         ref_layer.updateFields()
         
-        # Create the reference line feature
         ref_feature = QgsFeature()
         ref_line_geom = QgsLineString([ref_line_left, ref_line_right])
         ref_feature.setGeometry(QgsGeometry(ref_line_geom))
@@ -434,17 +400,14 @@ class TOFPA:
         
         # Style the reference line (red color, width 0.25)
         ref_symbol = QgsLineSymbol.createSimple({
-            'color': '255,0,0,255',  # Red color
+            'color': '255,0,0,255',
             'width': '0.25'
         })
         ref_layer.renderer().setSymbol(ref_symbol)
         ref_layer.triggerRepaint()
         
-        # Add reference line layer to map
         QgsProject.instance().addMapLayers([ref_layer])
-        
-        # Creation of the Take Off Climb Surfaces (from original script)
-        # Create memory layer
+
         v_layer = QgsVectorLayer(f"PolygonZ?crs={map_srid}", "RWY_TOFPA_AOC_TypeA", "memory")
         id_field = QgsField('ID', FIELD_STRING)
         name_field = QgsField('SurfaceName', FIELD_STRING)
@@ -452,7 +415,7 @@ class TOFPA:
         v_layer.dataProvider().addAttributes([name_field])
         v_layer.updateFields()
         
-        # Take Off Climb Surface Creation (from original script)
+        # Vertex order determines shadow-analysis indices; do not reorder (see _get_takeoff_reference_point)
         surface_area = [pt_03DR, pt_03DL, pt_02DL, pt_01DL, pt_01DR, pt_02DR]
         pr = v_layer.dataProvider()
         seg = QgsFeature()
@@ -460,19 +423,16 @@ class TOFPA:
         seg.setAttributes([13, 'TOFPA AOC Type A'])
         pr.addFeatures([seg])
         
-        # Load PolygonZ Layer to map canvas (from original script)
         QgsProject.instance().addMapLayers([v_layer])
-        
-        # Change style of layer (from original script but using modern syntax)
+
         symbol = QgsFillSymbol.createSimple({
-            'color': '128,128,128,102',  # Grey with 40% opacity
+            'color': '128,128,128,102',  # 40 % opacity
             'outline_color': '0,0,0,255',
             'outline_width': '0.5'
         })
         v_layer.renderer().setSymbol(symbol)
         v_layer.triggerRepaint()
         
-        # Contour layer generation (issue #27)
         if params.contour_interval_m > 0:
             _dist_to_max_w = (max_width_tofpa / 2 - width_tofpa / 2) / TOFPA_DIVERGENCE_RATIO
             _z_surface_end = ze + TOFPA_SURFACE_LENGTH * TOFPA_CLIMB_GRADIENT
@@ -560,24 +520,19 @@ class TOFPA:
                     level=Qgis.Warning
                 )
         
-        # Prepare layers for export (include obstacles if they exist)
         layers_to_export = [v_layer, ref_layer] + obstacles_layers
-        
-        # Export to KMZ if requested
+
         if export_kmz:
             self.export_to_kmz(layers_to_export)
-        
-        # Export to AIXM if requested
+
         if export_aixm:
             self.export_to_aixm(layers_to_export)
-        
-        # Zoom to layer (from original script)
+
         v_layer.selectAll()
         canvas = self.iface.mapCanvas()
         canvas.zoomToSelected(v_layer)
         v_layer.removeSelection()
-        
-        # Get canvas scale (from original script)
+
         sc = canvas.scale()
         if sc < 20000:
             sc = 20000
@@ -687,92 +642,80 @@ class TOFPA:
 
 
     def export_to_kmz(self, layers: list) -> bool:
-        """Export layers to KMZ format for Google Earth with proper styling."""
-        # Handle both single layer and list of layers
+        """Export layers to KMZ for Google Earth (absolute altitude mode)."""
         if not isinstance(layers, list):
             layers = [layers]
         
-        # Check if any layer has features
         has_features = any(layer.featureCount() > 0 for layer in layers)
         if not has_features:
             self.iface.messageBar().pushMessage(
-                "Error", 
-                "No features to export in any layer", 
+                "Error",
+                "No features to export in any layer",
                 level=Qgis.Critical
             )
             return False
-            
-        # Ask user for save location
+
         file_dialog = QFileDialog()
         file_dialog.setDefaultSuffix('kmz')
         file_path, _ = file_dialog.getSaveFileName(
-            None, 
-            "Save KMZ File", 
-            "", 
+            None,
+            "Save KMZ File",
+            "",
             "KMZ Files (*.kmz)"
         )
-        
+
         if not file_path:
             self.iface.messageBar().pushMessage(
-                "Info", 
-                "KMZ export cancelled by user", 
+                "Info",
+                "KMZ export cancelled by user",
                 level=Qgis.Info
             )
             return False
-        
-        # Ensure file has .kmz extension
+
         if not file_path.lower().endswith('.kmz'):
             file_path += '.kmz'
-        
-        # Convert KML to KMZ (zip multiple KML files)
+
         import zipfile
         try:
             with zipfile.ZipFile(file_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
                 temp_files = []
-                
+
                 for i, layer in enumerate(layers):
                     if layer.featureCount() == 0:
                         continue
-                        
-                    # Set up KML options with proper styling and absolute altitude
+
                     options = QgsVectorFileWriter.SaveVectorOptions()
                     options.driverName = "KML"
                     options.layerName = layer.name()
-                    
-                    # Set KML to use absolute altitude (not clamped to ground)
                     options.datasourceOptions = ['ALTITUDE_MODE=absolute']
-                    
-                    # KML uses EPSG:4326 (WGS84)
+
                     crs_4326 = QgsCoordinateReferenceSystem("EPSG:4326")
                     options.ct = QgsCoordinateTransform(
-                        layer.crs(), 
-                        crs_4326, 
+                        layer.crs(),
+                        crs_4326,
                         QgsProject.instance()
                     )
-                    
-                    # Write to temporary KML
+
                     temp_kml = file_path.replace('.kmz', f'_{i}_{layer.name()}.kml')
                     temp_files.append(temp_kml)
-                    
+
                     result = QgsVectorFileWriter.writeAsVectorFormatV2(
                         layer,
                         temp_kml,
                         QgsProject.instance().transformContext(),
                         options
                     )
-                    
+
                     if result[0] != QgsVectorFileWriter.NoError:
                         self.iface.messageBar().pushMessage(
-                            "Error", 
-                            f"Failed to export layer {layer.name()} to KML: {result[1]}", 
+                            "Error",
+                            f"Failed to export layer {layer.name()} to KML: {result[1]}",
                             level=Qgis.Critical
                         )
                         continue
-                    
-                    # Add KML file to ZIP
+
                     zipf.write(temp_kml, os.path.basename(temp_kml))
-                
-                # Remove temporary KML files
+
                 for temp_file in temp_files:
                     try:
                         os.remove(temp_file)
@@ -800,40 +743,36 @@ class TOFPA:
             return False
 
     def export_to_aixm(self, layers: list) -> bool:
-        """Export layers to AIXM 5.1.1 format for aviation data exchange."""
-        # Handle both single layer and list of layers
+        """Export layers to AIXM 5.1.1."""
         if not isinstance(layers, list):
             layers = [layers]
-        
-        # Check if any layer has features
+
         has_features = any(layer.featureCount() > 0 for layer in layers)
         if not has_features:
             self.iface.messageBar().pushMessage(
-                "Error", 
-                "No features to export in any layer", 
+                "Error",
+                "No features to export in any layer",
                 level=Qgis.Critical
             )
             return False
-            
-        # Ask user for save location
+
         file_dialog = QFileDialog()
         file_dialog.setDefaultSuffix('xml')
         file_path, _ = file_dialog.getSaveFileName(
-            None, 
-            "Save AIXM File", 
-            "", 
+            None,
+            "Save AIXM File",
+            "",
             "AIXM Files (*.xml)"
         )
-        
+
         if not file_path:
             self.iface.messageBar().pushMessage(
-                "Info", 
-                "AIXM export cancelled by user", 
+                "Info",
+                "AIXM export cancelled by user",
                 level=Qgis.Info
             )
             return False
-        
-        # Ensure file has .xml extension
+
         if not file_path.lower().endswith('.xml'):
             file_path += '.xml'
         

@@ -21,19 +21,11 @@ from qgis.core import (
     QgsProject,
     QgsWkbTypes,
 )
-from .compat import WKB_POLYGON_GEOM, WKB_LINE_GEOM  # MIGA-02
+from .compat import WKB_POLYGON_GEOM, WKB_LINE_GEOM
 
-
-# ---------------------------------------------------------------------------
-# Public entry point
-# ---------------------------------------------------------------------------
 
 def generate_aixm_file(layers: list, file_path: str) -> None:
-    """
-    Write an AIXM 5.1.1 XML file containing all *layers*.
-
-    Raises on any I/O or XML error — caller must handle.
-    """
+    """Write an AIXM 5.1.1 XML file. Raises on I/O or XML error — caller must handle."""
     root = ET.Element("aixm:AIXMBasicMessage")
     root.set("xmlns:aixm", "http://www.aixm.aero/schema/5.1.1")
     root.set("xmlns:gml", "http://www.opengis.net/gml/3.2")
@@ -61,12 +53,7 @@ def generate_aixm_file(layers: list, file_path: str) -> None:
     tree.write(file_path, encoding="utf-8", xml_declaration=True)
 
 
-# ---------------------------------------------------------------------------
-# Feature-level helpers
-# ---------------------------------------------------------------------------
-
 def _add_surface(root: ET.Element, layer) -> None:
-    """Add each feature of *layer* as an AIXM ``NavigationArea``."""
     layer_crs = layer.crs()
     for feature in layer.getFeatures():
         fm = ET.SubElement(root, "gml:featureMember")
@@ -96,7 +83,6 @@ def _add_surface(root: ET.Element, layer) -> None:
 
 
 def _add_reference_line(root: ET.Element, layer) -> None:
-    """Add each feature of *layer* as an AIXM ``Curve``."""
     layer_crs = layer.crs()
     for feature in layer.getFeatures():
         fm = ET.SubElement(root, "gml:featureMember")
@@ -109,12 +95,8 @@ def _add_reference_line(root: ET.Element, layer) -> None:
             _add_geometry(curve, geom, layer_crs)
 
 
-# ---------------------------------------------------------------------------
-# Geometry helpers
-# ---------------------------------------------------------------------------
-
 def _add_geometry(parent: ET.Element, geometry, layer_crs) -> None:
-    """Transform *geometry* to WGS-84 using *layer_crs* and attach GML."""
+    """Reproject geometry to WGS-84 and attach as GML surface or curve."""
     crs_4326 = QgsCoordinateReferenceSystem("EPSG:4326")
     transform = QgsCoordinateTransform(layer_crs, crs_4326, QgsProject.instance())
     geom_4326 = QgsGeometry(geometry)
@@ -127,7 +109,6 @@ def _add_geometry(parent: ET.Element, geometry, layer_crs) -> None:
 
 
 def _add_gml_surface(parent: ET.Element, geometry) -> None:
-    """Attach a ``gml:Surface`` (polygon) to *parent*."""
     wrapper = ET.SubElement(parent, "aixm:geometryComponent")
     surface = ET.SubElement(wrapper, "aixm:Surface")
     surface.set("gml:id", f"srf_{uuid.uuid4().hex[:8]}")
@@ -155,7 +136,6 @@ def _add_gml_surface(parent: ET.Element, geometry) -> None:
 
 
 def _add_gml_curve(parent: ET.Element, geometry) -> None:
-    """Attach a ``gml:Curve`` (linestring) to *parent*."""
     wrapper = ET.SubElement(parent, "aixm:geometryComponent")
     curve = ET.SubElement(wrapper, "aixm:Curve")
     curve.set("gml:id", f"crv_{uuid.uuid4().hex[:8]}")

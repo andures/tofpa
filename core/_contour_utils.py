@@ -1,18 +1,13 @@
 # -*- coding: utf-8 -*-
 """
-_contour_utils.py — Pure-Python contour helpers for TOFPA stepped surfaces.
+Pure-Python contour geometry for the TOFPA AOC Type A climb surface.
 
-No QGIS dependency: safe to import in unit tests without a QGIS context.
-
-Ported from FLYGHT7/qOLS scripts/_contour_utils.py (issue #84) and adapted
-for the TOFPA plugin geometry (issue #27).
-
-The TOFPA AOC Type A surface has a single constant slope and two width zones:
-
-  * Expanding zone   [0, distance_to_max_width]:  half-width grows linearly.
-  * Constant-width   [distance_to_max_width, surface_length]: max half-width.
-
+No QGIS dependency — safe to import in unit tests without a QGIS context.
 All distances and elevations in metres.
+
+The surface has two width zones:
+  - Expanding  [0, distance_to_max_width]:  half-width grows linearly.
+  - Constant   [distance_to_max_width, surface_length]: max half-width fixed.
 """
 from __future__ import annotations
 
@@ -21,54 +16,25 @@ from math import ceil, floor, radians, sin, cos
 from typing import List
 
 
-# ---------------------------------------------------------------------------
-# Data containers
-# ---------------------------------------------------------------------------
-
 @dataclass(frozen=True)
 class ContourSpec:
-    """Geometry-agnostic specification for a single contour line.
+    """Single contour line defined by its elevation (m MSL), axis distance (m), and half-width (m)."""
 
-    Attributes:
-        elevation:            The surface elevation this contour represents (m).
-        distance_from_origin: Distance along the surface centre axis from pt_01D.
-        half_width:           Half the width of the contour line at this distance.
-    """
     elevation: float
     distance_from_origin: float
     half_width: float
 
 
-# ---------------------------------------------------------------------------
-# Elevation level helpers
-# ---------------------------------------------------------------------------
-
 def contour_elevations(z_start: float, z_end: float, interval: int) -> List[float]:
-    """Return whole-number elevation levels spaced *interval* metres apart.
+    """Return integer-multiple elevation levels in the half-open interval (z_start, z_end].
 
-    Only levels strictly inside the open interval (z_start, z_end] are
-    returned.  The surface start elevation is not a contour — the surface
-    polygon already starts there.
+    z_start is excluded because the surface polygon already starts at that elevation.
+    Returns an empty list when interval <= 0 or z_end <= z_start.
 
-    Args:
-        z_start:  Elevation at the near (DER) end of the surface, metres.
-        z_end:    Elevation at the far end of the surface, metres.
-        interval: Contour spacing in metres.  Must be a positive integer.
-                  Pass 0 to disable (returns empty list).
-
-    Returns:
-        Sorted list of float elevations.  Empty when interval <= 0 or
-        z_end <= z_start (flat / descending surfaces).
-
-    Examples:
-        >>> contour_elevations(21.7, 81.7, 10)
-        [30.0, 40.0, 50.0, 60.0, 70.0, 80.0]
-        >>> contour_elevations(0.0, 10.0, 10)
-        [10.0]
-        >>> contour_elevations(10.0, 10.0, 10)
-        []
-        >>> contour_elevations(21.7, 81.7, 0)
-        []
+    >>> contour_elevations(21.7, 81.7, 10)
+    [30.0, 40.0, 50.0, 60.0, 70.0, 80.0]
+    >>> contour_elevations(0.0, 10.0, 10)
+    [10.0]
     """
     if interval <= 0 or z_end <= z_start:
         return []
@@ -79,10 +45,6 @@ def contour_elevations(z_start: float, z_end: float, interval: int) -> List[floa
     return [float(v) for v in range(first, last + 1, interval)]
 
 
-# ---------------------------------------------------------------------------
-# Per-section geometry helpers
-# ---------------------------------------------------------------------------
-
 def contour_specs_for_linear_section(
     z_section_start: float,
     z_section_end: float,
@@ -92,29 +54,9 @@ def contour_specs_for_linear_section(
     divergence_ratio: float,
     elevations: List[float],
 ) -> List[ContourSpec]:
-    """Compute ContourSpecs for a **linearly sloped** trapezoidal section.
+    """Compute ContourSpecs for a linearly sloped trapezoidal section.
 
-    The section runs from *d_offset* (elevation *z_section_start*) to
-    ``d_offset + (z_section_end - z_section_start) / slope`` (elevation
-    *z_section_end*).
-
-    Half-width at distance *d* from the global origin::
-
-        half_width(d) = near_half_width + d * divergence_ratio
-
-    where *near_half_width* is the half-width at *d_offset*.
-
-    Args:
-        z_section_start:  Elevation at the start of this section.
-        z_section_end:    Elevation at the end of this section.
-        slope:            Vertical rise per horizontal metre (> 0).
-        d_offset:         Horizontal distance of the section start from origin.
-        near_half_width:  Half-width at *d_offset*.
-        divergence_ratio: Lateral growth per metre (e.g. 0.125 for 12.5 %).
-        elevations:       Pre-computed list of target elevations.
-
-    Returns:
-        List of :class:`ContourSpec` in elevation order.
+    Half-width at global distance d:  near_half_width + d * divergence_ratio
     """
     if slope <= 0:
         return []
@@ -144,29 +86,12 @@ def contour_specs_for_takeoff(
     divergence_ratio: float,
     elevations: List[float],
 ) -> List[ContourSpec]:
-    """Compute ContourSpecs for the TOFPA AOC Type A Climb Surface.
+    """Compute ContourSpecs for the full TOFPA AOC Type A Climb Surface.
 
-    The surface has a single constant slope throughout but two width zones:
-
-    * **Expanding zone** ``[0, distance_to_max_width]``:
-      ``half_width = near_half_width + d * divergence_ratio``
-    * **Constant-width zone** ``[distance_to_max_width, surface_length]``:
-      ``half_width = max_half_width``
-
-    Elevation increases linearly: ``z(d) = z_start + d * slope_ratio``.
-
-    Args:
-        z_start:               Elevation at pt_01D (DER), metres.
-        slope_ratio:           Vertical rise per horizontal metre (e.g. 0.012).
-        distance_to_max_width: Distance at which the surface reaches max width.
-        surface_length:        Total length of the climb surface from pt_01D.
-        near_half_width:       Half of widthDep at pt_01D.
-        max_half_width:        Half of maxWidthDep.
-        divergence_ratio:      Lateral growth per metre (e.g. 0.125).
-        elevations:            Pre-computed list of target elevations.
-
-    Returns:
-        List of :class:`ContourSpec` in elevation order.
+    Elevation: z(d) = z_start + d * slope_ratio
+    Width zones:
+      [0, distance_to_max_width]  → half_width grows with divergence_ratio
+      (distance_to_max_width, …]  → half_width fixed at max_half_width
     """
     if slope_ratio <= 0:
         return []
@@ -180,7 +105,6 @@ def contour_specs_for_takeoff(
         d = (z_c - z_start) / slope_ratio
         if d > surface_length + 1e-6:
             continue
-        # Width zone
         if d <= distance_to_max_width:
             half_w = near_half_width + d * divergence_ratio
         else:
@@ -193,14 +117,8 @@ def contour_specs_for_takeoff(
     return specs
 
 
-# ---------------------------------------------------------------------------
-# 3-D OCS penetration helpers — pure math, no QGIS dependency.
-# Kept here so tests can import them directly without QGIS bindings.
-# ---------------------------------------------------------------------------
-
 def distance_along_axis(obstacle_pt, der_pt, azimuth_deg: float) -> float:
-    """Return the signed distance (metres) from *der_pt* to *obstacle_pt*
-    projected onto the takeoff axis defined by *azimuth_deg* (0 = North)."""
+    """Signed projection of obstacle_pt onto the takeoff axis from der_pt (metres)."""
     az = radians(azimuth_deg)
     dx = obstacle_pt.x() - der_pt.x()
     dy = obstacle_pt.y() - der_pt.y()
@@ -208,10 +126,7 @@ def distance_along_axis(obstacle_pt, der_pt, azimuth_deg: float) -> float:
 
 
 def ocs_elevation_at_distance(d: float, z_der: float, climb_gradient: float) -> float:
-    """Return the OCS surface elevation (MSL) at horizontal distance *d* from the DER.
-
-    Points behind the DER (d < 0) are evaluated at *z_der*.
-    """
+    """OCS elevation (m MSL) at distance d from the DER. Returns z_der for d < 0."""
     if d < 0:
         return z_der
     return z_der + d * climb_gradient

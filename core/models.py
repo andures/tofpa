@@ -1,13 +1,10 @@
 # -*- coding: utf-8 -*-
 """
-TOFPA domain models.
+Domain models for the TOFPA calculation core.
 
-Dataclasses that encode the surface-geometry and obstacle-analysis contracts
-at the boundary between the QGIS UI layer and the calculation core.
-
-Applying the *type-first* principle (python-best-practices skill): every
-public function that deals with TOFPA parameters accepts one of these
-dataclasses rather than a sprawling positional argument list.
+Typed dataclasses that represent the contract between the QGIS UI layer
+and the calculation core. All public surface/obstacle functions accept
+one of these instead of a positional argument list.
 """
 
 from __future__ import annotations
@@ -31,25 +28,18 @@ class TofpaParams:
     Field descriptions reference ICAO Doc 8168, Vol I, §3.1.3.
     """
 
-    # Surface geometry
     width_tofpa: float          # initial half-width at DER (metres)
     max_width_tofpa: float      # maximum half-width at full divergence (metres)
     cwy_length: float           # clearway length (metres; 0 = no clearway)
     z0: float                   # threshold elevation (metres MSL)
     ze: float                   # end-of-runway elevation (metres MSL)
     s: int                      # RunwayDirection: 0 = start→end, -1 = end→start
-
-    # Layer references
     runway_layer_id: Optional[str]
     threshold_layer_id: Optional[str]
     use_selected_feature: bool
-
-    # Export flags
     export_kmz: bool
     export_aixm: bool
-
-    # Contour generation (issue #27) — 0 = disabled
-    contour_interval_m: int = 0
+    contour_interval_m: int = 0  # 0 disables contour generation
 
     @classmethod
     def from_dict(cls, d: dict) -> "TofpaParams":
@@ -77,10 +67,10 @@ class ObstacleParams:
     include_obstacles: bool
     obstacles_layer_id: Optional[str]
     obstacle_height_field: Optional[str]
-    obstacle_buffer: float       # horizontal safety buffer around each obstacle (metres)
-    min_obstacle_height: float   # minimum height threshold — shorter obstacles are ignored
+    obstacle_buffer: float        # horizontal safety buffer (metres)
+    min_obstacle_height: float    # obstacles shorter than this are ignored (metres)
     enable_shadow_analysis: bool
-    shadow_tolerance: float      # angular cone (degrees) within which shadowing can occur
+    shadow_tolerance: float       # angular cone for shadow detection (degrees)
 
     @classmethod
     def from_dict(cls, d: dict) -> "ObstacleParams":

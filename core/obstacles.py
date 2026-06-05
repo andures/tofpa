@@ -28,7 +28,7 @@ from qgis.core import (
     QgsVectorLayer,
     QgsWkbTypes,
 )
-from ..utils.compat import FIELD_INT, FIELD_DOUBLE, FIELD_STRING, WKB_POLYGON_GEOM  # MIGA-01, MIGA-02
+from ..utils.compat import FIELD_INT, FIELD_DOUBLE, FIELD_STRING, WKB_POLYGON_GEOM
 from ._contour_utils import distance_along_axis as _distance_along_axis
 from ._contour_utils import ocs_elevation_at_distance as _ocs_elevation_at_distance
 
@@ -47,12 +47,7 @@ class ObstacleAnalyzer:
         analyzer.finalize_layers(layers_info)
     """
 
-    # ------------------------------------------------------------------
-    # Layer creation
-    # ------------------------------------------------------------------
-
     def create_layers(self, crs) -> dict:
-        """Create memory layers for obstacles analysis including shadow analysis layers."""
         critical_fields = [
             QgsField("id", FIELD_INT),
             QgsField("height", FIELD_DOUBLE),
@@ -92,10 +87,6 @@ class ObstacleAnalyzer:
             "buffer_layer": buffer_layer,
         }
 
-    # ------------------------------------------------------------------
-    # Single-obstacle analysis
-    # ------------------------------------------------------------------
-
     def analyze_single(
         self,
         feature,
@@ -104,23 +95,19 @@ class ObstacleAnalyzer:
         min_height: float,
         tofpa_surface_layer,
         layers_info: dict,
-        # C-2: optional 3-D OCS parameters; when provided, determines
-        # criticality by comparing obstacle MSL elevation to OCS elevation.
+        # When der_point is supplied, criticality uses ICAO 3-D OCS elevation
+        # comparison; otherwise falls back to 2-D footprint-only logic.
         der_point=None,
         der_elevation: float = 0.0,
         takeoff_azimuth: float = 0.0,
         climb_gradient: float = 0.012,
     ) -> dict:
-        """Analyze a single obstacle against the TOFPA surface.
+        """Classify one obstacle as critical/safe and compute its OCS penetration.
 
-        Returns a dict with keys: ``is_critical``, ``height``,
-        ``intersection_type``, ``obstacle_point``, ``penetration_m``.
-
-        When *der_point* is supplied, criticality is determined by a proper
-        ICAO 3-D elevation comparison: the obstacle is critical only if its
-        Z value (MSL elevation) exceeds the OCS surface elevation at its XY
-        position (ICAO Doc 8168 §3.1.3).  Without *der_point* the previous
-        2-D footprint-only logic is used as fallback.
+        When *der_point* is supplied, criticality is determined by ICAO 3-D
+        elevation comparison (obstacle Z vs OCS elevation at its XY position,
+        per Doc 8168 §3.1.3). Without *der_point* any footprint intersection
+        is treated as critical (legacy 2-D fallback).
 
         Raises ``ValueError`` for features with invalid geometry.
         """
@@ -128,14 +115,12 @@ class ObstacleAnalyzer:
         if not geom or geom.isEmpty():
             raise ValueError("Invalid geometry")
 
-        # Resolve obstacle height
         obstacle_height = min_height
         if height_field:
             height_value = feature.attribute(height_field)
             if height_value is not None and isinstance(height_value, (int, float)):
                 obstacle_height = max(float(height_value), min_height)
 
-        # Build 3-D obstacle point
         if geom.type() == WKB_POLYGON_GEOM:
             centroid = geom.centroid().asPoint()
             obstacle_point = QgsPoint(centroid.x(), centroid.y(), obstacle_height)
@@ -143,13 +128,12 @@ class ObstacleAnalyzer:
             point = geom.asPoint()
             obstacle_point = QgsPoint(point.x(), point.y(), obstacle_height)
 
-        # Buffer (BUG-01 fix: fromPointXY requires QgsPointXY, not QgsPoint)
+        # fromPointXY requires QgsPointXY, not QgsPoint
         buffer_geom = (
             QgsGeometry.fromPointXY(QgsPointXY(obstacle_point.x(), obstacle_point.y()))
             .buffer(buffer_distance, 16)
         )
 
-        # 1) 2-D footprint check — determine if obstacle is inside the surface area
         intersects_footprint = False
         intersection_type = "None"
         for tofpa_feature in tofpa_surface_layer.getFeatures():
@@ -158,7 +142,6 @@ class ObstacleAnalyzer:
                 intersection_type = "Buffer intersects TOFPA surface"
                 break
 
-        # 2) Criticality: 3-D comparison when DER context is supplied (BUG-B fix)
         is_critical = False
         penetration_m = 0.0
         if intersects_footprint and der_point is not None:
@@ -167,10 +150,8 @@ class ObstacleAnalyzer:
             penetration_m = obstacle_point.z() - z_ocs
             is_critical = penetration_m > 0
         elif intersects_footprint:
-            # Fallback: no 3-D data provided → 2-D behaviour (all footprint = critical)
             is_critical = True
 
-        # Build obstacle feature (shadow fields populated later)
         obstacle_feature = QgsFeature()
         obstacle_feature.setGeometry(QgsGeometry(obstacle_point))
         obstacle_feature.setAttributes([
@@ -179,12 +160,11 @@ class ObstacleAnalyzer:
             buffer_distance,
             "CRITICAL" if is_critical else "SAFE",
             intersection_type,
-            round(penetration_m, 3),  # penetration_m
-            "",  # shadow_status
-            "",  # shadowed_by
+            round(penetration_m, 3),
+            "",
+            "",
         ])
 
-        # Build buffer feature
         buffer_feature = QgsFeature()
         buffer_feature.setGeometry(buffer_geom)
         buffer_feature.setAttributes([int(feature.id()), buffer_distance,
@@ -204,24 +184,17 @@ class ObstacleAnalyzer:
             "penetration_m": round(penetration_m, 3),
         }
 
-    # ------------------------------------------------------------------
-    # Shadow analysis
-    # ------------------------------------------------------------------
-
     def perform_shadow_analysis(
         self,
         obstacles_data: list[dict],
         tofpa_surface_layer,
         shadow_tolerance: float = 5.0,
     ) -> dict:
-        """
-        Determine which critical obstacles are shadowed (hidden) by others.
+        """Classify critical obstacles as shadowed or visible.
 
-        Shadow logic:
-        1. Locate the takeoff reference point from the TOFPA surface polygon.
-        2. For each critical obstacle, check whether any *closer*, *taller*
-           obstacle lies within the angular cone (``shadow_tolerance`` degrees).
-        3. Confirm the blockage via elevation angles.
+        An obstacle is shadowed when a closer, taller obstacle falls within
+        *shadow_tolerance* degrees of its bearing from the DER midpoint and
+        also blocks the elevation angle to it.
         """
         takeoff_point = self.get_takeoff_reference_point(tofpa_surface_layer)
         if not takeoff_point:
@@ -244,7 +217,6 @@ class ObstacleAnalyzer:
                 obstacle["shadowed_by"] = ""
                 visible_obstacles.append(obstacle)
 
-        # Non-critical obstacles are always "not applicable"
         for obstacle in obstacles_data:
             if not obstacle["is_critical"]:
                 obstacle["shadow_status"] = "NOT_APPLICABLE"
@@ -258,13 +230,12 @@ class ObstacleAnalyzer:
         }
 
     def get_takeoff_reference_point(self, tofpa_surface_layer) -> Optional[QgsPoint]:
-        """
-        Return the midpoint of the DER (near) edge of the TOFPA surface polygon.
+        """Return the midpoint of the DER (near) edge of the surface polygon.
 
-        Vertex order in the surface polygon (as built by create_tofpa_surface):
-          idx 0: pt_03DR   idx 1: pt_03DL   idx 2: pt_02DL
-          idx 3: pt_01DL   idx 4: pt_01DR   idx 5: pt_02DR   idx 6: close
-        The DER start edge is pt_01DL (3) ↔ pt_01DR (4).  — BUG-04 fix.
+        Polygon vertex order: [pt_03DR(0), pt_03DL(1), pt_02DL(2),
+                                pt_01DL(3), pt_01DR(4), pt_02DR(5), close(6)]
+        The DER edge is indices 3–4. Using 0 and -2 (the far end) inverts all
+        shadow direction calculations — that was the original bug.
         """
         try:
             for feature in tofpa_surface_layer.getFeatures():
@@ -290,10 +261,6 @@ class ObstacleAnalyzer:
         takeoff_point: QgsPoint,
         shadow_tolerance: float = 5.0,
     ) -> tuple[bool, Optional[dict]]:
-        """
-        Return ``(True, shadowing_obstacle)`` if *target_obstacle* is hidden
-        behind another obstacle as seen from *takeoff_point*.
-        """
         target_point = target_obstacle["point"]
         target_height = target_obstacle["height"]
         target_distance = takeoff_point.distance(target_point)
@@ -324,7 +291,6 @@ class ObstacleAnalyzer:
         return False, None
 
     def calculate_bearing(self, from_point: QgsPoint, to_point: QgsPoint) -> float:
-        """Bearing (azimuth, degrees) from *from_point* to *to_point*."""
         try:
             return from_point.azimuth(to_point)
         except Exception:
@@ -340,10 +306,7 @@ class ObstacleAnalyzer:
         shadow_point: QgsPoint,
         shadow_height: float,
     ) -> bool:
-        """
-        Return ``True`` if *shadow_point* (at *shadow_height*) blocks the line
-        of sight from *takeoff_point* to *target_point* (at *target_height*).
-        """
+        """Return True if shadow_point's elevation angle exceeds target_point's."""
         try:
             target_dist = takeoff_point.distance(target_point)
             shadow_dist = takeoff_point.distance(shadow_point)
@@ -365,11 +328,6 @@ class ObstacleAnalyzer:
         shadow_results: dict,
         buffer_distance: float,
     ) -> None:
-        """
-        Populate the shadowed / visible layers from *shadow_results*.
-
-        BUG-02 fix: ``buffer_distance`` is the user-supplied value, NOT hardcoded 10.0.
-        """
         try:
             for obstacle in shadow_results.get("shadowed_obstacles", []):
                 if obstacle["is_critical"]:
@@ -406,12 +364,7 @@ class ObstacleAnalyzer:
         except Exception as exc:
             logger.error("Error applying shadow results: %s", exc)
 
-    # ------------------------------------------------------------------
-    # Map layer finalisation
-    # ------------------------------------------------------------------
-
     def finalize_layers(self, layers_info: dict) -> None:
-        """Apply symbology to each obstacles layer and add them to the QGIS map."""
         _sym = QgsMarkerSymbol.createSimple
 
         layers_info["critical_layer"].renderer().setSymbol(
